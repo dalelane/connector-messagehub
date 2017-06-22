@@ -3,11 +3,11 @@
  *
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
- * and Eclipse Distribution License v1.0 which accompany this distribution. 
+ * and Eclipse Distribution License v1.0 which accompany this distribution.
  *
- * The Eclipse Public License is available at 
+ * The Eclipse Public License is available at
  *    http://www.eclipse.org/legal/epl-v10.html
- * and the Eclipse Distribution License is available at 
+ * and the Eclipse Distribution License is available at
  *   http://www.eclipse.org/org/documents/edl-v10.php.
  *
  * Contributors:
@@ -53,22 +53,26 @@ public class IoTFSubscriber extends EventSubscriber implements MqttCallback, Run
 	private IoTFEnvironment env;
 	private AtomicLong messagesReceived;
 
-	public IoTFSubscriber(IoTFEnvironment env) {
+	private boolean running = false;
+
+	public IoTFSubscriber(IoTFEnvironment env, String deviceid) {
 		this.env = env;
+		this.topic = "iot-2/type/+/id/" + deviceid + "/evt/+/fmt/+";
+
 		this.messagesReceived = new AtomicLong(0);
 	}
 
 	@Override
 	public void run() {
 
+		this.running = true;
+
 		try {
-			
+
 			String serverURI = "ssl://" + env.getCredentials().getMqttHost() + ":" + env.getCredentials().getMqttPort();
 			String username = env.getCredentials().getApiKey();
 			String password = env.getCredentials().getApiToken();
 			String clientID = "A:" + env.getCredentials().getOrg() + ":" + env.getAppId();
-			
-			topic = "iot-2/type/+/id/+/evt/+/fmt/+";
 
 			appClient = new MqttAsyncClient(serverURI, clientID, null);
 			connectOptions = new MqttConnectOptions();
@@ -80,37 +84,59 @@ public class IoTFSubscriber extends EventSubscriber implements MqttCallback, Run
 			sslContext.init(null, null, null);
 			connectOptions.setSocketFactory(sslContext.getSocketFactory());
 			appClient.setCallback(this);
-			
+
 			// connect retry loop
 			boolean connected = false;
 			do {
-				
+
 				connected = connect();
-				
+
 				if (!connected) {
 					try {
 						Thread.sleep(250);
-					} catch (InterruptedException e) {}
+					} catch (InterruptedException e) {
+						running = false;
+					}
 				}
-				
-			} while (connected == false);
+
+			} while (running && connected == false);
 
 			// log out the number of events received every 5 seconds
-			while (true) {
+			while (running) {
 
 				try {
 					Thread.sleep(5000);
-				} catch (Exception e) {}
+				}
+				catch (InterruptedException e) {
+					running = false;
+				}
 
 				logger.log(Level.INFO, "Total events received: " + messagesReceived.get());
 			}
 
+
+			disconnect();
+
 		} catch (Exception e) {
 			logger.log(Level.FATAL, "Failure during client creation: " + e.getMessage(), e);
-			System.exit(1);
+			e.printStackTrace();
 		}
 	}
-	
+
+
+	@Override
+	public void disconnect() {
+		super.disconnect();
+
+		try {
+			appClient.disconnectForcibly();
+			appClient.close();
+		}
+		catch (MqttException e) {
+			e.printStackTrace();
+		}
+	}
+
 	private boolean connect() {
 		logger.log(Level.INFO, "Attemping to connect MQTT client.");
 		try {
@@ -118,31 +144,33 @@ public class IoTFSubscriber extends EventSubscriber implements MqttCallback, Run
 			appClient.subscribe(topic, 0).waitForCompletion();
 			logger.log(Level.INFO, "MQTT connection established.");
 			return true;
-		} catch (MqttSecurityException e) {		
+		} catch (MqttSecurityException e) {
 			logger.log(Level.ERROR, "Failed to connect: " + e.getMessage(), e);
 		} catch (MqttException e) {
 			logger.log(Level.ERROR, "Failed to connect: " + e.getMessage(), e);
-		}		
+		}
 		return false;
-	}	
+	}
 
 	@Override
 	public void connectionLost(Throwable arg0) {
 		logger.log(Level.ERROR, "Connection Lost: " + arg0.getMessage(), arg0);
 		logger.log(Level.INFO, "Reconnecting");
-		
+
 		boolean connected = false;
 		do {
-			
+
 			connected = connect();
-			
+
 			if (!connected) {
 				try {
 					Thread.sleep(250);
-				} catch (InterruptedException e) {}
+				} catch (InterruptedException e) {
+					running = false;
+				}
 			}
-			
-		} while (connected == false);
+
+		} while (running && connected == false);
 	}
 
 	@Override
@@ -152,6 +180,11 @@ public class IoTFSubscriber extends EventSubscriber implements MqttCallback, Run
 
 	@Override
 	public void messageArrived(String topic, MqttMessage message) throws Exception {
+		if (!running) {
+			disconnect();
+			return;
+		}
+
 		try {
 			Matcher matcher = DEVICE_EVENT_PATTERN.matcher(topic);
 
@@ -165,19 +198,19 @@ public class IoTFSubscriber extends EventSubscriber implements MqttCallback, Run
 				String payloadStr = new String(payload);
 
 				logger.log(Level.DEBUG, "Event received:");
-				logger.log(Level.DEBUG, "Device Type: " + type + "\n" + 
-						"Device ID: " + id + "\n" + 
-						"Event ID: " + event + "\n" + 
-						"Format: " + format + "\n" + 
-						"Payload: " + payloadStr);	
+				logger.log(Level.DEBUG, "Device Type: " + type + "\n" +
+						"Device ID: " + id + "\n" +
+						"Event ID: " + event + "\n" +
+						"Format: " + format + "\n" +
+						"Payload: " + payloadStr);
 
 				messagesReceived.incrementAndGet();
 
 				JsonObject eventJson = new JsonObject();
 				String encodedPayload = DatatypeConverter.printBase64Binary(payload);
-				
+
 				logger.log(Level.DEBUG, "base64 encoded payload: " + encodedPayload);
-				
+
 				eventJson.addProperty("typeId", type);
 				eventJson.addProperty("deviceId", id);
 				eventJson.addProperty("eventId", event);
@@ -190,7 +223,7 @@ public class IoTFSubscriber extends EventSubscriber implements MqttCallback, Run
 				this.handleEvent(key, eventJson.toString());
 			}
 		} catch (Throwable t) {
-			logger.log(Level.ERROR, "Error during event processing/republish: " + t.getMessage(), t);			
-		}		
+			logger.log(Level.ERROR, "Error during event processing/republish: " + t.getMessage(), t);
+		}
 	}
 }

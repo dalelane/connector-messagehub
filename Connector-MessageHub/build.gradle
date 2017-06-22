@@ -77,11 +77,6 @@ jar {
             into 'build/libs/lib'
         }
 	}
-    // Provide Main-Class so the JAR executes properly, along with the required classpath data.
-    manifest {
-        attributes('Main-Class': mainClassName,
-        'Class-Path': '. ./ ./lib ' + configurations.runtime.files.collect { './lib/' + it.name }.join(' '))
-    }
 }
 
 // Save JAR in build directory.
