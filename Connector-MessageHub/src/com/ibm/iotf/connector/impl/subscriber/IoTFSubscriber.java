@@ -36,7 +36,9 @@ import org.eclipse.paho.client.mqttv3.MqttException;
 import org.eclipse.paho.client.mqttv3.MqttMessage;
 import org.eclipse.paho.client.mqttv3.MqttSecurityException;
 
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import com.ibm.iotf.connector.api.EventSubscriber;
 
 public class IoTFSubscriber extends EventSubscriber implements MqttCallback, Runnable {
@@ -52,6 +54,8 @@ public class IoTFSubscriber extends EventSubscriber implements MqttCallback, Run
 
 	private IoTFEnvironment env;
 	private AtomicLong messagesReceived;
+
+	private JsonParser jsonParser = new JsonParser();
 
 	private boolean running = false;
 
@@ -204,6 +208,9 @@ public class IoTFSubscriber extends EventSubscriber implements MqttCallback, Run
 						"Format: " + format + "\n" +
 						"Payload: " + payloadStr);
 
+
+				JsonElement jsonPayload = jsonParser.parse(payloadStr);
+
 				messagesReceived.incrementAndGet();
 
 				JsonObject eventJson = new JsonObject();
@@ -216,7 +223,8 @@ public class IoTFSubscriber extends EventSubscriber implements MqttCallback, Run
 				eventJson.addProperty("eventId", event);
 				eventJson.addProperty("format", format);
 				eventJson.addProperty("timestamp", ISO8601_DATE_FORMAT.format(new Date()));
-				eventJson.addProperty("payload", encodedPayload);
+				eventJson.add("payload", jsonPayload);
+//				eventJson.addProperty("payload", encodedPayload);
 
 				String key = new StringBuilder(type).append(":").append(id).toString();
 
